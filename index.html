@@ -472,6 +472,7 @@ const WIFI_SSID_CHECK  = false; // true = activar control por red (requiere ajus
 const FABRICA_LAT    = -34.68052856844603;
 const FABRICA_LNG    = -58.37472894596177;
 const RADIO_METROS   = 100; // radio permitido alrededor de la fábrica
+const MINUTOS_ENTRE_FICHADAS = 20; // tiempo mínimo entre fichadas desde el mismo dispositivo
 
 const EMPLEADOS = [
   { nombre: "Jose Luis Vazquez",  pin: "06" },
@@ -514,6 +515,7 @@ setInterval(actualizarReloj, 1000);
 // --- Estado ---
 let empleadoSeleccionado = null;
 let pinIngresado = "";
+let ultimaFichadaTimestamp = null; // control de tiempo entre fichadas
 
 // --- Pantallas ---
 function showScreen(id) {
@@ -659,6 +661,22 @@ function limpiarPin() {
 // --- Verificación PIN ---
 function verificarPin() {
   if (pinIngresado === empleadoSeleccionado.pin) {
+    // Verificar tiempo mínimo entre fichadas
+    const ahora = Date.now();
+    if (ultimaFichadaTimestamp !== null) {
+      const minutosTranscurridos = (ahora - ultimaFichadaTimestamp) / 1000 / 60;
+      if (minutosTranscurridos < MINUTOS_ENTRE_FICHADAS) {
+        const minutosRestantes = Math.ceil(MINUTOS_ENTRE_FICHADAS - minutosTranscurridos);
+        document.getElementById("pin-error").textContent =
+          "Esperá " + minutosRestantes + " min antes de volver a fichar.";
+        setTimeout(() => {
+          limpiarPin();
+          document.getElementById("pin-error").textContent = "";
+          goToEmpleados();
+        }, 2500);
+        return;
+      }
+    }
     enviarFichada();
   } else {
     for (let i = 0; i < 2; i++) {
@@ -708,6 +726,7 @@ const TIPOS = {
 };
 
 function mostrarConfirmacion(data) {
+  ultimaFichadaTimestamp = Date.now(); // registrar momento de esta fichada
   const tipo  = TIPOS[data.tipo] || { emoji: "✅", clase: "ingreso", label: data.tipo };
   const ahora = new Date();
 
