@@ -392,8 +392,8 @@
 
 <main>
   <div id="wifi-error" class="wifi-error">
-    ⚠️ Solo podés fichar desde la red WiFi de la fábrica.<br>
-    Conectate al WiFi e intentá de nuevo.
+    📍 No pudimos verificar tu ubicación.<br>
+    Tenés que estar en la fábrica y permitir el acceso a la ubicación para poder fichar.
   </div>
 
   <!-- PANTALLA 1: Selección de empleado -->
@@ -465,33 +465,38 @@
 // ══════════════════════════════════════════════════════
 // CONFIGURACIÓN — editá esto antes de publicar
 // ══════════════════════════════════════════════════════
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwRCWTP1T0NXAJqH5TLxcktca52nRsv52D8R6vdeAfTGwAcVL9puHqL4fG7OCkXEeDNdA/exec";
+const APPS_SCRIPT_URL = "TU_APPS_SCRIPT_URL_AQUI";
 const WIFI_SSID_CHECK  = false; // true = activar control por red (requiere ajuste de Apps Script)
 
+// ── GEOLOCALIZACIÓN ──
+const FABRICA_LAT    = -34.68052856844603;
+const FABRICA_LNG    = -58.37472894596177;
+const RADIO_METROS   = 100; // radio permitido alrededor de la fábrica
+
 const EMPLEADOS = [
-  { nombre: "Jose Luis Vazquez",  pin: "06" },
-  { nombre: "Jesus Giles",        pin: "09" },
-  { nombre: "Barbara Perez",      pin: "04" },
-  { nombre: "Franco Bustos",      pin: "50" },
-  { nombre: "Gastón Bustos",      pin: "51" },
-  { nombre: "Claudio Díaz",       pin: "08" },
-  { nombre: "Paola Perez",        pin: "10" },
-  { nombre: "Carlos Gauto",       pin: "26" },
-  { nombre: "Lorenzo Corridoni",  pin: "52" },
-  { nombre: "Leandra Torres",     pin: "22" },
-  { nombre: "Roberto Bustos",     pin: "07" },
-  { nombre: "Alejandro Fava",     pin: "05" },
-  { nombre: "Melina Fava",        pin: "20" },
-  { nombre: "Matías Ochoa",       pin: "24" },
-  { nombre: "Julio Bustos",       pin: "02" },
-  { nombre: "Diego Medina",       pin: "03" },
-  { nombre: "Sergio Ochoa",       pin: "01" },
-  { nombre: "Gabriel Bustos",     pin: "32" },
-  { nombre: "Ciro Palavecino",    pin: "53" },
-  { nombre: "Santiago Polo",      pin: "31" },
-  { nombre: "Gabi Perez",         pin: "30" },
-  { nombre: "Marcos Perez",       pin: "54" },
-  { nombre: "Naim Soria",         pin: "55" },
+  { nombre: "Jose Luis Vazquez",  pin: "1234" },
+  { nombre: "Jesus Giles",        pin: "1234" },
+  { nombre: "Barbara Perez",      pin: "1234" },
+  { nombre: "Franco Bustos",      pin: "1234" },
+  { nombre: "Gastón Bustos",      pin: "1234" },
+  { nombre: "Claudio Díaz",       pin: "1234" },
+  { nombre: "Paola Perez",        pin: "1234" },
+  { nombre: "Carlos Gauto",       pin: "1234" },
+  { nombre: "Claudio Navarro",    pin: "1234" },
+  { nombre: "Lorenzo Corridoni",  pin: "1234" },
+  { nombre: "Leandra Torres",     pin: "1234" },
+  { nombre: "Roberto Bustos",     pin: "1234" },
+  { nombre: "Alejandro Fava",     pin: "1234" },
+  { nombre: "Melina Fava",        pin: "1234" },
+  { nombre: "Matías Ochoa",       pin: "1234" },
+  { nombre: "Julio Bustos",       pin: "1234" },
+  { nombre: "Diego Medina",       pin: "1234" },
+  { nombre: "Sergio Ochoa",       pin: "1234" },
+  { nombre: "Gabriel Bustos",     pin: "1234" },
+  { nombre: "Ciro",               pin: "1234" },
+  { nombre: "Santiago Polo",      pin: "1234" },
+  { nombre: "Gabi Perez",         pin: "1234" },
+  { nombre: "Marcos Perez",       pin: "1234" },
 ];
 // ══════════════════════════════════════════════════════
 
@@ -523,6 +528,58 @@ function goToEmpleados() {
   showScreen("screen-empleado");
 }
 
+// ── GEOLOCALIZACIÓN ──────────────────────────────────────────
+
+function calcularDistancia(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // radio de la tierra en metros
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng/2) * Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function verificarUbicacion(onSuccess) {
+  if (!navigator.geolocation) {
+    mostrarErrorGeo("Tu navegador no soporta geolocalización.");
+    return;
+  }
+  // Mostrar pantalla de carga mientras obtiene ubicación
+  showScreen("screen-loading");
+  document.querySelector(".loading-text").textContent = "Verificando ubicación...";
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const dist = calcularDistancia(
+        pos.coords.latitude, pos.coords.longitude,
+        FABRICA_LAT, FABRICA_LNG
+      );
+      if (dist <= RADIO_METROS) {
+        document.getElementById("wifi-error").classList.remove("visible");
+        onSuccess();
+      } else {
+        mostrarErrorGeo("Estás a " + Math.round(dist) + " metros de la fábrica. Tenés que estar dentro para fichar.");
+      }
+    },
+    (err) => {
+      if (err.code === err.PERMISSION_DENIED) {
+        mostrarErrorGeo("Permiso de ubicación denegado. Activá la ubicación en tu celular para poder fichar.");
+      } else {
+        mostrarErrorGeo("No se pudo obtener tu ubicación. Intentá de nuevo.");
+      }
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  );
+}
+
+function mostrarErrorGeo(msg) {
+  const banner = document.getElementById("wifi-error");
+  banner.innerHTML = "📍 " + msg;
+  banner.classList.add("visible");
+  showScreen("screen-empleado");
+}
+
 // --- Lista de empleados ---
 function iniciales(nombre) {
   const p = nombre.trim().split(" ");
@@ -551,13 +608,15 @@ renderLista(EMPLEADOS);
 
 // --- Selección de empleado ---
 function seleccionarEmpleado(emp) {
-  empleadoSeleccionado = emp;
-  pinIngresado = "";
-  document.getElementById("pin-avatar").textContent = iniciales(emp.nombre);
-  document.getElementById("pin-nombre").textContent = emp.nombre;
-  limpiarPin();
-  showScreen("screen-pin");
-  document.getElementById("pin-error").textContent = "";
+  verificarUbicacion(() => {
+    empleadoSeleccionado = emp;
+    pinIngresado = "";
+    document.getElementById("pin-avatar").textContent = iniciales(emp.nombre);
+    document.getElementById("pin-nombre").textContent = emp.nombre;
+    limpiarPin();
+    showScreen("screen-pin");
+    document.getElementById("pin-error").textContent = "";
+  });
 }
 document.getElementById("btn-volver").onclick = goToEmpleados;
 
