@@ -162,7 +162,6 @@
       width: 100%;
     }
     .empleado-btn:active { background: #EFF2F8; border-color: var(--azul); }
-    .empleado-btn.reciente { border-color: var(--acento); }
     .empleado-avatar {
       width: 36px;
       height: 36px;
@@ -180,14 +179,6 @@
       font-size: 15px;
       font-weight: 500;
       color: var(--texto);
-    }
-    .empleado-tag {
-      font-size: 10px;
-      font-weight: 700;
-      color: var(--acento);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-top: 2px;
     }
     .empleado-arrow {
       margin-left: auto;
@@ -588,8 +579,7 @@ function goToEmpleados() {
   pinIngresado = "";
   empleadoSeleccionado = null;
   document.getElementById("buscar").value = "";
-  listaBase = listaConRecienteArriba();
-  renderLista(listaBase);
+  renderLista(EMPLEADOS);
   showScreen("screen-empleado");
 }
 
@@ -656,25 +646,6 @@ function mostrarErrorGeo(msg) {
   showScreen("screen-empleado");
 }
 
-// ── ÚLTIMO EMPLEADO USADO EN ESTE CELULAR (aparece primero en la lista) ──
-
-function obtenerUltimoEmpleado() {
-  try { return localStorage.getItem('fichada_ultimo_empleado'); } catch (e) { return null; }
-}
-function guardarUltimoEmpleado(nombre) {
-  try { localStorage.setItem('fichada_ultimo_empleado', nombre); } catch (e) {}
-}
-function listaConRecienteArriba() {
-  const ultimo = obtenerUltimoEmpleado();
-  if (!ultimo) return EMPLEADOS;
-  const idx = EMPLEADOS.findIndex(e => e.nombre === ultimo);
-  if (idx <= 0) return EMPLEADOS;
-  const copia = EMPLEADOS.slice();
-  const [emp] = copia.splice(idx, 1);
-  copia.unshift(emp);
-  return copia;
-}
-
 // --- Lista de empleados ---
 function iniciales(nombre) {
   const p = nombre.trim().split(" ");
@@ -682,30 +653,24 @@ function iniciales(nombre) {
 }
 function renderLista(lista) {
   const cont = document.getElementById("lista-empleados");
-  const ultimo = obtenerUltimoEmpleado();
   cont.innerHTML = "";
   lista.forEach(emp => {
-    const esReciente = emp.nombre === ultimo;
     const btn = document.createElement("button");
-    btn.className = "empleado-btn" + (esReciente ? " reciente" : "");
+    btn.className = "empleado-btn";
     btn.innerHTML = `
       <div class="empleado-avatar">${iniciales(emp.nombre)}</div>
-      <div>
-        <div class="empleado-nombre">${emp.nombre}</div>
-        ${esReciente ? '<div class="empleado-tag">★ Último usado</div>' : ''}
-      </div>
+      <div class="empleado-nombre">${emp.nombre}</div>
       <div class="empleado-arrow">›</div>
     `;
     btn.onclick = () => seleccionarEmpleado(emp);
     cont.appendChild(btn);
   });
 }
-let listaBase = listaConRecienteArriba();
 document.getElementById("buscar").addEventListener("input", e => {
   const q = e.target.value.toLowerCase();
-  renderLista(listaBase.filter(emp => emp.nombre.toLowerCase().includes(q)));
+  renderLista(EMPLEADOS.filter(emp => emp.nombre.toLowerCase().includes(q)));
 });
-renderLista(listaBase);
+renderLista(EMPLEADOS);
 
 // --- Selección de empleado ---
 function seleccionarEmpleado(emp) {
@@ -799,7 +764,6 @@ function verificarPin() {
       }, 2500);
       return;
     }
-    guardarUltimoEmpleado(empleadoSeleccionado.nombre);
     mostrarPantallaTipo();
   } else {
     for (let i = 0; i < 2; i++) {
