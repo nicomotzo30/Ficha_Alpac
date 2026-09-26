@@ -513,8 +513,9 @@
   </div>
 </main>
 
-<footer>Alpac SRL · Sistema de fichada</footer>
+<footer>Alpac SRL · Sistema de fichada<br><button id="exportar-pendientes" hidden style="margin-top:8px;cursor:pointer">Exportar pendientes</button></footer>
 
+<script src="./outbox.js"></script>
 <script>
 // ══════════════════════════════════════════════════════
 // CONFIGURACIÓN — editá esto antes de publicar
@@ -569,13 +570,18 @@ setInterval(actualizarReloj, 1000);
 let empleadoSeleccionado = null;
 let pinIngresado = "";
 let procesandoCola = false;
+let screenVersion = 0;
+let pinVersion = 0;
 
 // --- Pantallas ---
 function showScreen(id) {
+  screenVersion++;
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
 }
 function goToEmpleados() {
+  if (guardandoFichada) return;
+  clearTimeout(confirmTimer);
   pinIngresado = "";
   empleadoSeleccionado = null;
   document.getElementById("buscar").value = "";
@@ -588,14 +594,17 @@ function goToEmpleados() {
 // así cuando eligen quién son ya está resuelta casi siempre.
 
 let ubicacionPromise = null;
+let ubicacionSolicitada = 0;
 
 function crearPromesaUbicacion() {
+  ubicacionSolicitada = Date.now();
   ubicacionPromise = new Promise((resolve, reject) => {
     if (!navigator.geolocation) { reject({ code: 0 }); return; }
     navigator.geolocation.getCurrentPosition(resolve, reject, {
       enableHighAccuracy: true, timeout: 10000, maximumAge: 30000
     });
   });
+  ubicacionPromise.catch(() => {}); // La precarga puede fallar antes de que se seleccione empleado.
   return ubicacionPromise;
 }
 crearPromesaUbicacion();
@@ -611,12 +620,15 @@ function calcularDistancia(lat1, lng1, lat2, lng2) {
 }
 
 function verificarUbicacion(onSuccess) {
-  const promesa = ubicacionPromise || crearPromesaUbicacion();
+  const promesa = ubicacionPromise && Date.now() - ubicacionSolicitada < 30000
+    ? ubicacionPromise : crearPromesaUbicacion();
 
   showScreen("screen-loading");
   document.querySelector(".loading-text").textContent = "Verificando ubicación...";
 
+  const version = screenVersion;
   promesa.then(pos => {
+    if (version !== screenVersion) return;
     const dist = calcularDistancia(
       pos.coords.latitude, pos.coords.longitude,
       FABRICA_LAT, FABRICA_LNG
@@ -628,6 +640,7 @@ function verificarUbicacion(onSuccess) {
       mostrarErrorGeo("Estás a " + Math.round(dist) + " metros de la fábrica. Tenés que estar dentro para fichar.");
     }
   }).catch(err => {
+    if (version !== screenVersion) return;
     ubicacionPromise = null; // para que el próximo intento pida ubicación de nuevo
     if (err.code === 1) {
       mostrarErrorGeo("Permiso de ubicación denegado. Activá la ubicación en tu celular para poder fichar.");
@@ -704,6 +717,7 @@ teclas.forEach(t => {
 });
 
 function presionarTecla(t) {
+  pinVersion++;
   if (t === "limpiar") { pinIngresado = ""; }
   else if (t === "borrar") { pinIngresado = pinIngresado.slice(0, -1); }
   else if (pinIngresado.length < 2) { pinIngresado += t; }
@@ -725,39 +739,27 @@ function limpiarPin() {
 
 // ── COOLDOWN ENTRE FICHADAS (persiste entre recargas de página) ──
 
-function obtenerUltimaFichadaLocal(nombre) {
-  try {
-    const todos = JSON.parse(localStorage.getItem('fichada_ultima_local') || '{}');
-    return todos[nombre] || null; // { fecha, hora }
-  } catch (e) { return null; }
-}
-function guardarUltimaFichadaLocal(nombre, fecha, hora) {
-  try {
-    const todos = JSON.parse(localStorage.getItem('fichada_ultima_local') || '{}');
-    todos[nombre] = { fecha, hora };
-    localStorage.setItem('fichada_ultima_local', JSON.stringify(todos));
-  } catch (e) {}
-}
-function minutosDesdeUltimaFichada(nombre) {
-  const estado = obtenerUltimaFichadaLocal(nombre);
-  if (!estado || !estado.hora) return null;
-  const fechaHoy = new Date().toLocaleDateString("es-AR");
-  if (estado.fecha !== fechaHoy) return null;
-  const partes = estado.hora.split(":").map(Number);
-  const ultima = new Date();
-  ultima.setHours(partes[0], partes[1], partes[2] || 0, 0);
-  return (Date.now() - ultima.getTime()) / 1000 / 60;
+async function minutosDesdeUltimaFichada(nombre) {
+  if (!await storageReady) throw new Error(storageError);
+  return AlpacQueue.elapsed(await AlpacQueue.last(nombre), new Date());
 }
 
 // --- Verificación PIN ---
-function verificarPin() {
+async function verificarPin() {
+  if (!empleadoSeleccionado) return;
+  const version = screenVersion;
+  const intento = pinVersion;
   if (pinIngresado === empleadoSeleccionado.pin) {
-    const minutosTranscurridos = minutosDesdeUltimaFichada(empleadoSeleccionado.nombre);
+    let minutosTranscurridos;
+    try { minutosTranscurridos = await minutosDesdeUltimaFichada(empleadoSeleccionado.nombre); }
+    catch (err) { if (version === screenVersion) mostrarError(err.message); return; }
+    if (version !== screenVersion || intento !== pinVersion) return;
     if (minutosTranscurridos !== null && minutosTranscurridos < MINUTOS_ENTRE_FICHADAS) {
       const minutosRestantes = Math.ceil(MINUTOS_ENTRE_FICHADAS - minutosTranscurridos);
       document.getElementById("pin-error").textContent =
         "Esperá " + minutosRestantes + " min antes de volver a fichar.";
       setTimeout(() => {
+        if (version !== screenVersion || intento !== pinVersion) return;
         limpiarPin();
         document.getElementById("pin-error").textContent = "";
         goToEmpleados();
@@ -773,6 +775,7 @@ function verificarPin() {
     }
     document.getElementById("pin-error").textContent = "PIN incorrecto. Intentá de nuevo.";
     setTimeout(() => {
+      if (version !== screenVersion || intento !== pinVersion) return;
       limpiarPin();
       document.getElementById("pin-error").textContent = "";
     }, 1200);
@@ -788,85 +791,122 @@ function mostrarPantallaTipo() {
 document.getElementById("btn-ingreso").onclick = () => registrarFichadaOffline("Entrada");
 document.getElementById("btn-egreso").onclick  = () => registrarFichadaOffline("Salida");
 
-// ── COLA OFFLINE ──────────────────────────────────────────────
-// El tipo lo eligió la persona, así que acá no hay que predecir nada:
-// se guarda tal cual y se muestra la confirmación al instante.
+// ── COLA OFFLINE TRANSACCIONAL ────────────────────────────────
+let guardandoFichada = false;
+let confirmTimer = null;
+let syncTimer = null;
+let storageError = '';
+const storageReady = Promise.resolve().then(() => AlpacQueue.migrate(localStorage)).then(() => true).catch(err => {
+  storageError = err.message;
+  document.getElementById('pendientes-badge').textContent = '⚠ Almacenamiento: requiere revisión';
+  return false;
+});
 
 function generarId() {
-  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-  return 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, n => n.toString(16).padStart(2, '0')).join('');
 }
-function leerCola() {
-  try { return JSON.parse(localStorage.getItem('fichada_cola') || '[]'); }
-  catch (e) { return []; }
+async function actualizarBadgePendientes() {
+  if (!await storageReady) return;
+  const queue = await AlpacQueue.list();
+  const n = queue.length, review = queue.filter(item => item.review).length;
+  const el = document.getElementById('pendientes-badge');
+  el.textContent = n ? '⏳ ' + n + ' pendiente' + (n > 1 ? 's' : '') + (review ? ' · ⚠ ' + review + ' a revisar' : '') : '';
+  el.title = queue.filter(item => item.error).map(item => item.nombre + ': ' + item.error).join('\n');
+  document.getElementById('exportar-pendientes').hidden = !n;
 }
-function guardarCola(cola) {
-  try { localStorage.setItem('fichada_cola', JSON.stringify(cola)); } catch (e) {}
+function errorAlmacenamiento(err) {
+  document.getElementById('pendientes-badge').textContent = '⚠ No se pudo acceder a las fichadas guardadas';
+  console.error('Almacenamiento de fichadas:', err);
 }
-function actualizarBadgePendientes() {
-  const n = leerCola().length;
-  const el = document.getElementById("pendientes-badge");
-  if (!el) return;
-  el.textContent = n > 0 ? ("⏳ " + n + " pendiente" + (n > 1 ? "s" : "")) : "";
-}
-
-function registrarFichadaOffline(tipoElegido) {
+async function registrarFichadaOffline(tipoElegido) {
+  if (guardandoFichada || !empleadoSeleccionado || !document.getElementById('screen-tipo').classList.contains('active')) return;
+  guardandoFichada = true;
   const ahora = new Date();
-  const id = generarId();
-  const fecha = ahora.toLocaleDateString("es-AR");
-  const horaTexto = ahora.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-
-  guardarUltimaFichadaLocal(empleadoSeleccionado.nombre, fecha, horaTexto);
-
-  const payload = {
-    id: id,
-    nombre: empleadoSeleccionado.nombre,
-    tipo: tipoElegido, // "Entrada" | "Salida"
-    timestampCliente: ahora.toISOString(),
-  };
-
-  const cola = leerCola();
-  cola.push(payload);
-  guardarCola(cola);
-  actualizarBadgePendientes();
-
-  mostrarConfirmacion({ nombre: empleadoSeleccionado.nombre, tipo: tipoElegido });
-
-  procesarCola();
+  const nombre = empleadoSeleccionado.nombre;
+  document.getElementById('btn-ingreso').disabled = true;
+  document.getElementById('btn-egreso').disabled = true;
+  document.getElementById('btn-volver-tipo').disabled = true;
+  let payload;
+  try {
+    if (!await storageReady) throw new Error(storageError);
+    payload = { id: generarId(), nombre, tipo: tipoElegido, timestampCliente: ahora.toISOString() };
+    await AlpacQueue.enqueue(payload, MINUTOS_ENTRE_FICHADAS);
+  } catch (err) {
+    mostrarError('No se confirmó la fichada: ' + err.message);
+    return;
+  } finally {
+    guardandoFichada = false;
+    document.getElementById('btn-ingreso').disabled = false;
+    document.getElementById('btn-egreso').disabled = false;
+    document.getElementById('btn-volver-tipo').disabled = false;
+  }
+  // Sólo la transacción local está en el camino de la confirmación.
+  mostrarConfirmacion(payload);
+  actualizarBadgePendientes().catch(errorAlmacenamiento);
+  programarSync(0);
+  registrarSyncEnSegundoPlano();
 }
-
+function programarSync(delay = 1000) {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(procesarCola, delay);
+}
 async function procesarCola() {
   if (procesandoCola) return;
   procesandoCola = true;
-
-  let cola = leerCola();
-  while (cola.length > 0) {
-    const item = cola[0];
-    try {
-      const resp = await fetch(APPS_SCRIPT_URL, {
-        method: "POST",
-        body: JSON.stringify(item),
-      });
-      const data = await resp.json();
-      if (data.status === "ok") {
-        cola.shift();
-        guardarCola(cola);
-        actualizarBadgePendientes();
-      } else {
-        break; // error del servidor, se reintenta más tarde
-      }
-    } catch (e) {
-      break; // sin conexión, se reintenta más tarde
-    }
+  try {
+    if (!await storageReady || navigator.onLine === false) return;
+    await AlpacQueue.sync(APPS_SCRIPT_URL, actualizarBadgePendientes);
+  } catch (err) { errorAlmacenamiento(err); }
+  finally {
+    procesandoCola = false;
+    programarSync(5000);
   }
-
-  procesandoCola = false;
 }
+async function registrarSyncEnSegundoPlano() {
+  try {
+    const registration = await workerReady;
+    if (registration && registration.sync) await registration.sync.register('alpac-fichadas');
+  } catch (_) { /* El ciclo de la página sigue activo si Background Sync no está disponible. */ }
+}
+const workerReady = ('serviceWorker' in navigator && window.isSecureContext)
+  ? navigator.serviceWorker.register('./sw.js').catch(err => { console.warn('Apertura offline no disponible:', err); return null; })
+  : Promise.resolve(null);
+workerReady.then(registration => {
+  if (registration) {
+    registrarSyncEnSegundoPlano();
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  }
+});
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', () => {
+  actualizarBadgePendientes().catch(errorAlmacenamiento);
+});
+window.addEventListener('online', () => { programarSync(0); registrarSyncEnSegundoPlano(); });
+window.addEventListener('pageshow', () => programarSync(0));
+window.addEventListener('focus', () => programarSync(0));
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) programarSync(0);
+});
+document.getElementById('pendientes-badge').onclick = async () => {
+  try { await AlpacQueue.retry(); programarSync(0); } catch (err) { errorAlmacenamiento(err); }
+};
+document.getElementById('exportar-pendientes').onclick = async () => {
+  try {
+    const data = {};
+    try { data.pendientes = await AlpacQueue.list(); } catch (err) { data.errorDB = err.message; }
+    try { data.colaAnterior = localStorage.getItem('fichada_cola'); } catch (err) { data.errorLegacy = err.message; }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'alpac-pendientes.json'; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) { mostrarError('No se pudo exportar: ' + err.message); }
+};
+storageReady.then(ok => {
+  if (!ok) document.getElementById('exportar-pendientes').hidden = false;
+  actualizarBadgePendientes().catch(errorAlmacenamiento);
+  programarSync(0);
+});
 
-window.addEventListener('online', procesarCola);
-window.addEventListener('load', procesarCola);
-setInterval(procesarCola, 20000);
-actualizarBadgePendientes();
 
 // --- Confirmación ---
 const TIPOS = {
@@ -876,7 +916,7 @@ const TIPOS = {
 
 function mostrarConfirmacion(data) {
   const tipo  = TIPOS[data.tipo] || { emoji: "✅", clase: "ingreso", label: data.tipo };
-  const ahora = new Date();
+  const ahora = new Date(data.timestampCliente);
 
   document.getElementById("confirm-icon").textContent = tipo.emoji;
   document.getElementById("confirm-icon").className   = `confirm-icon ${tipo.clase}`;
@@ -899,7 +939,8 @@ function mostrarConfirmacion(data) {
       bar.style.width = "100%";
     });
   });
-  setTimeout(goToEmpleados, 2500);
+  clearTimeout(confirmTimer);
+  confirmTimer = setTimeout(goToEmpleados, 2500);
 }
 
 function mostrarError(msg) {
