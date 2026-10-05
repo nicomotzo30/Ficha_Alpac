@@ -1,7 +1,7 @@
 /* Publicar junto a index.html y outbox.js en el MISMO origen HTTPS. */
 importScripts('./outbox.js');
 const API_URL = 'https://script.google.com/macros/s/AKfycbwRCWTP1T0NXAJqH5TLxcktca52nRsv52D8R6vdeAfTGwAcVL9puHqL4fG7OCkXEeDNdA/exec';
-const CACHE = 'alpac-shell-v2-1';
+const CACHE = 'alpac-shell-v2-2';
 const SHELL = ['./index.html', './outbox.js'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
